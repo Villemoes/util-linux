@@ -76,6 +76,9 @@ struct linux_rtc_time {
 # define RTC_SET_TIME	_IOW('p', 0x0a, struct linux_rtc_time)
 # define RTC_UIE_ON	_IO('p', 0x03)	/* Update int. enable on */
 # define RTC_UIE_OFF	_IO('p', 0x04)	/* Update int. enable off */
+# define RTC_AIE_ON      _IO('p', 0x01)  /* Alarm int. enable on         */
+# define RTC_AIE_OFF     _IO('p', 0x02)  /* ... off                      */
+# define RTC_ALM_SET     _IOW('p', 0x07, struct linux_rtc_time) /* Set alarm time  */
 #endif
 
 /* RTC_EPOCH_READ and RTC_EPOCH_SET are present since 2.0.34 and 2.1.89 */
@@ -236,6 +239,32 @@ static int busywait_for_rtc_clock_tick(const struct hwclock_control *ctl,
 	return RTC_BUSYWAIT_OK;
 }
 
+static int enable_interrupt(int rtc_fd, int *turn_off)
+{
+	struct tm tm;
+	time_t when;
+	int rc;
+
+	rc = ioctl(rtc_fd, RTC_UIE_ON, 0);
+	if (rc != -1) {
+		*turn_off = RTC_UIE_OFF;
+		return rc;
+	}
+
+	rc = do_rtc_read_ioctl(rtc_fd, &tm);
+	if (rc == -1)
+		return rc;
+	when = timegm(&tm) + 2;
+	gmtime_r(&when, &tm);
+	rc = ioctl(rtc_fd, RTC_ALM_SET, &tm);
+	if (rc == -1)
+		return rc;
+	rc = ioctl(rtc_fd, RTC_AIE_ON, 0);
+	if (rc != -1)
+		*turn_off = RTC_AIE_OFF;
+	return rc;
+}
+
 static int poll_for_interrupt(const struct hwclock_control *ctl, int rtc_fd)
 {
 	/*
@@ -274,6 +303,7 @@ static int synchronize_to_clock_tick_rtc(const struct hwclock_control *ctl)
 	int rtc_fd;		/* File descriptor of /dev/rtc */
 	int ret = 1;
 	int rc;			/* Return code from ioctl */
+	int turn_off;
 
 	rtc_fd = open_rtc(ctl);
 	if (rtc_fd == -1) {
@@ -290,14 +320,14 @@ static int synchronize_to_clock_tick_rtc(const struct hwclock_control *ctl)
 	rc = -1;
 	errno = EINVAL;
 #else
-	rc = ioctl(rtc_fd, RTC_UIE_ON, 0);
+	rc = enable_interrupt(rtc_fd, &turn_off);
 #endif
 	if (rc != -1) {
 		ret = poll_for_interrupt(ctl, rtc_fd);
-		/* Turn off update interrupts */
-		rc = ioctl(rtc_fd, RTC_UIE_OFF, 0);
+		/* Turn off update interrupts/alarm */
+		rc = ioctl(rtc_fd, turn_off, 0);
 		if (rc == -1)
-			warn(_("ioctl() to %s to turn off update interrupts failed"),
+			warn(_("ioctl() to %s to turn off update/alarm interrupts failed"),
 			     rtc_dev_name);
 	} else if (errno == ENOTTY || errno == EINVAL) {
 		/*
