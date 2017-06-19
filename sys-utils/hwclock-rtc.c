@@ -236,6 +236,36 @@ static int busywait_for_rtc_clock_tick(const struct hwclock_control *ctl,
 	return RTC_BUSYWAIT_OK;
 }
 
+static int poll_for_interrupt(const struct hwclock_control *ctl, int rtc_fd)
+{
+	/*
+	 * Just reading rtc_fd fails on broken hardware: no update
+	 * interrupt comes and a bootscript with a hwclock call hangs
+	 */
+	fd_set rfds;
+	struct timeval tv;
+	int rc;
+
+	/*
+	 * Wait up to ten seconds for the next update interrupt
+	 */
+	FD_ZERO(&rfds);
+	FD_SET(rtc_fd, &rfds);
+	tv.tv_sec = 10;
+	tv.tv_usec = 0;
+	rc = select(rtc_fd + 1, &rfds, NULL, NULL, &tv);
+	if (0 < rc)
+		return 0;
+	else if (rc == 0) {
+		if (ctl->debug)
+			printf(_("select() to %s to wait for clock tick timed out"),
+			       rtc_dev_name);
+	} else
+		warn(_("select() to %s to wait for clock tick failed"),
+		     rtc_dev_name);
+	return 1;
+}
+
 /*
  * Same as synchronize_to_clock_tick(), but just for /dev/rtc.
  */
@@ -263,32 +293,7 @@ static int synchronize_to_clock_tick_rtc(const struct hwclock_control *ctl)
 	rc = ioctl(rtc_fd, RTC_UIE_ON, 0);
 #endif
 	if (rc != -1) {
-		/*
-		 * Just reading rtc_fd fails on broken hardware: no
-		 * update interrupt comes and a bootscript with a
-		 * hwclock call hangs
-		 */
-		fd_set rfds;
-		struct timeval tv;
-
-		/*
-		 * Wait up to ten seconds for the next update
-		 * interrupt
-		 */
-		FD_ZERO(&rfds);
-		FD_SET(rtc_fd, &rfds);
-		tv.tv_sec = 10;
-		tv.tv_usec = 0;
-		rc = select(rtc_fd + 1, &rfds, NULL, NULL, &tv);
-		if (0 < rc)
-			ret = 0;
-		else if (rc == 0) {
-			if (ctl->debug)
-				printf(_("select() to %s to wait for clock tick timed out"),
-				       rtc_dev_name);
-		} else
-			warn(_("select() to %s to wait for clock tick failed"),
-			     rtc_dev_name);
+		ret = poll_for_interrupt(ctl, rtc_fd);
 		/* Turn off update interrupts */
 		rc = ioctl(rtc_fd, RTC_UIE_OFF, 0);
 		if (rc == -1)
