@@ -243,71 +243,72 @@ static int synchronize_to_clock_tick_rtc(const struct hwclock_control *ctl)
 {
 	int rtc_fd;		/* File descriptor of /dev/rtc */
 	int ret = 1;
+	int rc;			/* Return code from ioctl */
 
 	rtc_fd = open_rtc(ctl);
 	if (rtc_fd == -1) {
 		warn(_("cannot open rtc device"));
 		return ret;
-	} else {
-		int rc;		/* Return code from ioctl */
-		/* Turn on update interrupts (one per second) */
-#if defined(__alpha__) || defined(__sparc__)
-		/*
-		 * Not all alpha kernels reject RTC_UIE_ON, but probably
-		 * they should.
-		 */
-		rc = -1;
-		errno = EINVAL;
-#else
-		rc = ioctl(rtc_fd, RTC_UIE_ON, 0);
-#endif
-		if (rc != -1) {
-			/*
-			 * Just reading rtc_fd fails on broken hardware: no
-			 * update interrupt comes and a bootscript with a
-			 * hwclock call hangs
-			 */
-			fd_set rfds;
-			struct timeval tv;
-
-			/*
-			 * Wait up to ten seconds for the next update
-			 * interrupt
-			 */
-			FD_ZERO(&rfds);
-			FD_SET(rtc_fd, &rfds);
-			tv.tv_sec = 10;
-			tv.tv_usec = 0;
-			rc = select(rtc_fd + 1, &rfds, NULL, NULL, &tv);
-			if (0 < rc)
-				ret = 0;
-			else if (rc == 0) {
-				if (ctl->debug)
-					printf(_("select() to %s to wait for clock tick timed out"),
-					       rtc_dev_name);
-			} else
-				warn(_("select() to %s to wait for clock tick failed"),
-				     rtc_dev_name);
-			/* Turn off update interrupts */
-			rc = ioctl(rtc_fd, RTC_UIE_OFF, 0);
-			if (rc == -1)
-				warn(_("ioctl() to %s to turn off update interrupts failed"),
-				     rtc_dev_name);
-		} else if (errno == ENOTTY || errno == EINVAL) {
-			/*
-			 * This rtc device doesn't have interrupt functions.
-			 * This is typical on an Alpha, where the Hardware
-			 * Clock interrupts are used by the kernel for the
-			 * system clock, so aren't at the user's disposal.
-			 */
-			if (ctl->debug)
-				printf(_("%s does not have interrupt functions. "),
-				       rtc_dev_name);
-			ret = busywait_for_rtc_clock_tick(ctl, rtc_fd);
-		} else
-			warn(_("ioctl() to %s to turn on update interrupts "
-			      "failed unexpectedly"), rtc_dev_name);
 	}
+
+	/* Turn on update interrupts (one per second) */
+#if defined(__alpha__) || defined(__sparc__)
+	/*
+	 * Not all alpha kernels reject RTC_UIE_ON, but probably they
+	 * should.
+	 */
+	rc = -1;
+	errno = EINVAL;
+#else
+	rc = ioctl(rtc_fd, RTC_UIE_ON, 0);
+#endif
+	if (rc != -1) {
+		/*
+		 * Just reading rtc_fd fails on broken hardware: no
+		 * update interrupt comes and a bootscript with a
+		 * hwclock call hangs
+		 */
+		fd_set rfds;
+		struct timeval tv;
+
+		/*
+		 * Wait up to ten seconds for the next update
+		 * interrupt
+		 */
+		FD_ZERO(&rfds);
+		FD_SET(rtc_fd, &rfds);
+		tv.tv_sec = 10;
+		tv.tv_usec = 0;
+		rc = select(rtc_fd + 1, &rfds, NULL, NULL, &tv);
+		if (0 < rc)
+			ret = 0;
+		else if (rc == 0) {
+			if (ctl->debug)
+				printf(_("select() to %s to wait for clock tick timed out"),
+				       rtc_dev_name);
+		} else
+			warn(_("select() to %s to wait for clock tick failed"),
+			     rtc_dev_name);
+		/* Turn off update interrupts */
+		rc = ioctl(rtc_fd, RTC_UIE_OFF, 0);
+		if (rc == -1)
+			warn(_("ioctl() to %s to turn off update interrupts failed"),
+			     rtc_dev_name);
+	} else if (errno == ENOTTY || errno == EINVAL) {
+		/*
+		 * This rtc device doesn't have interrupt functions.
+		 * This is typical on an Alpha, where the Hardware
+		 * Clock interrupts are used by the kernel for the
+		 * system clock, so aren't at the user's disposal.
+		 */
+		if (ctl->debug)
+			printf(_("%s does not have interrupt functions. "),
+			       rtc_dev_name);
+		ret = busywait_for_rtc_clock_tick(ctl, rtc_fd);
+	} else
+		warn(_("ioctl() to %s to turn on update interrupts "
+		       "failed unexpectedly"), rtc_dev_name);
+
 	return ret;
 }
 
